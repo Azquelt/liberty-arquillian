@@ -24,6 +24,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.lang.ProcessBuilder.Redirect;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -1141,9 +1142,22 @@ public class WLPManagedContainer implements DeployableContainer<WLPManagedContai
          Runtime.getRuntime().removeShutdownHook(shutdownThread);
          shutdownThread = null;
       }
+      
+      ProcessBuilder stopProcess = new ProcessBuilder(getServerCommand(CommandType.STOP));
+      stopProcess.redirectErrorStream(true);
+      stopProcess.redirectOutput(Redirect.INHERIT);
+      try {
+          int rc = stopProcess.start().waitFor();
+          if (rc != 0) {
+              throw new LifecycleException("Server stop failed, see log for details. RC = " + rc);
+          }
+      } catch (Exception e) {
+          throw new LifecycleException("Failed to run server stop command");
+      }
+      
       try {
          if (wlpProcess != null) {
-            wlpProcess.destroy();
+            // Server stop succeeded so launched process should now end
             wlpProcess.waitFor();
             wlpProcess = null;
          }
