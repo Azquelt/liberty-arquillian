@@ -226,7 +226,7 @@ public class WLPManagedContainer implements DeployableContainer<WLPManagedContai
 
             wlpProcess = pb.start();
 
-            new Thread(new ConsoleConsumer()).start();
+            new Thread(new ConsoleConsumer(wlpProcess)).start();
 
              cmd = getServerCommand(CommandType.STOP);
              shutdownThread = getShutDownThread(cmd);
@@ -1151,9 +1151,9 @@ public class WLPManagedContainer implements DeployableContainer<WLPManagedContai
          // First run "server stop"
          ProcessBuilder stopProcessBuilder = new ProcessBuilder(getServerCommand(CommandType.STOP));
          stopProcessBuilder.redirectErrorStream(true);
-         stopProcessBuilder.redirectOutput(Redirect.INHERIT);
          try {
             Process stopProcess = stopProcessBuilder.start();
+            new Thread(new ConsoleConsumer(stopProcess)).start();
             int rc = waitFor(stopProcess, containerConfiguration.getServerStopTimeout(), TimeUnit.SECONDS);
             if (rc != 0) {
                throw new LifecycleException("Server stop failed, see log for details. RC = " + rc);
@@ -1641,10 +1641,17 @@ public class WLPManagedContainer implements DeployableContainer<WLPManagedContai
     * @author Stuart Douglas
     */
    private class ConsoleConsumer implements Runnable {
+      
+       private final Process process;
+       
+       public ConsoleConsumer(Process process) {
+          super();
+          this.process = process;
+       }
 
-       @Override
+      @Override
        public void run() {
-           final InputStream stream = wlpProcess.getInputStream();
+           final InputStream stream = process.getInputStream();
            final boolean writeOutput = containerConfiguration.isOutputToConsole();
 
            try {
