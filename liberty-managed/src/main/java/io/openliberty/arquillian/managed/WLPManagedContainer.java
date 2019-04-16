@@ -39,6 +39,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -49,6 +51,7 @@ import javax.management.ObjectName;
 import javax.management.remote.JMXConnector;
 import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
+import javax.swing.text.html.MinimalHTMLWriter;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -1143,30 +1146,59 @@ public class WLPManagedContainer implements DeployableContainer<WLPManagedContai
          shutdownThread = null;
       }
       
-      ProcessBuilder stopProcess = new ProcessBuilder(getServerCommand(CommandType.STOP));
-      stopProcess.redirectErrorStream(true);
-      stopProcess.redirectOutput(Redirect.INHERIT);
-      try {
-          int rc = stopProcess.start().waitFor();
-          if (rc != 0) {
-              throw new LifecycleException("Server stop failed, see log for details. RC = " + rc);
-          }
-      } catch (Exception e) {
-          throw new LifecycleException("Failed to run server stop command");
+      // Only attempt to stop the server if we started it
+      if (wlpProcess != null) {
+         // First run "server stop"
+         ProcessBuilder stopProcessBuilder = new ProcessBuilder(getServerCommand(CommandType.STOP));
+         stopProcessBuilder.redirectErrorStream(true);
+         stopProcessBuilder.redirectOutput(Redirect.INHERIT);
+         try {
+            Process stopProcess = stopProcessBuilder.start();
+            int rc = waitFor(stopProcess, containerConfiguration.getServerStopTimeout(), TimeUnit.SECONDS);
+            if (rc != 0) {
+               throw new LifecycleException("Server stop failed, see log for details. RC = " + rc);
+            }
+         } catch (TimeoutException e) {
+            throw new LifecycleException("Server stop command did not complete within the server stop timeout", e);
+         } catch (Exception e) {
+            throw new LifecycleException("Failed to run server stop command");
+         }
+         
+         try {
+            // Server stop succeeded so launched process should now end
+            waitFor(wlpProcess, containerConfiguration.getServerStopTimeout(), TimeUnit.SECONDS);
+            wlpProcess = null;
+         } catch (Exception e) {
+            throw new LifecycleException("Server stop command ran but the server process did not exit", e);
+         }
       }
       
-      try {
-         if (wlpProcess != null) {
-            // Server stop succeeded so launched process should now end
-            wlpProcess.waitFor();
-            wlpProcess = null;
-         }
-      } catch (Exception e) {
-         throw new LifecycleException("Could not stop container", e);
-      }
-
       if (log.isLoggable(Level.FINER)) {
          log.exiting(className, "stop");
+      }
+   }
+   
+   /**
+    * Waits for the given process to finish and returns its return code
+    * <p>
+    * If the process does not finish within the specified time limit, a TimeoutException is thrown instead
+    * 
+    * @param process the process to wait for
+    * @param time the time to wait
+    * @param timeUnit the unit for {@code time}
+    * @return the process return code
+    * @throws TimeoutException if the process does not finish within the specified time
+    */
+   public int waitFor(Process process, int time, TimeUnit timeUnit) throws TimeoutException {
+      long millisToWait = TimeUnit.MILLISECONDS.convert(time, timeUnit);
+      Interruptor interruptor = new Interruptor(Thread.currentThread(), millisToWait);
+      try {
+         interruptor.start();
+         int rc = process.waitFor();
+         interruptor.stop();
+         return rc;
+      } catch (InterruptedException e) {
+         throw new TimeoutException("Timed out waiting for process to stop after " + time + " " + timeUnit);
       }
    }
 
